@@ -1,7 +1,7 @@
 {
-  "name": "airtalk-replica",
+  "name": "audio-replica",
   "version": "1.0.0",
-  "description": "Voice-only random chat clone of AirTalk",
+  "description": "Voice-only random chat clone of audio chat",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
