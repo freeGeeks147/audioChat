@@ -2,6 +2,7 @@ const socket = io();
 let peerConnection;
 const startBtn = document.getElementById('start');
 const statusText = document.getElementById('status');
+const remoteAudio = document.getElementById('remoteAudio');
 
 startBtn.onclick = async () => {
   startBtn.disabled = true;
@@ -15,6 +16,7 @@ socket.on('matched', async peerId => {
 });
 
 socket.on('signal', async ({ from, data }) => {
+  if (!peerConnection) return;
   if (data.sdp) {
     await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
     if (data.sdp.type === 'offer') {
@@ -34,11 +36,20 @@ socket.on('peer-disconnected', () => {
 
 async function setupConnection(peerId) {
   peerConnection = new RTCPeerConnection();
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
+
+  // Handle incoming audio tracks
+  peerConnection.ontrack = event => {
+    const [stream] = event.streams;
+    remoteAudio.srcObject = stream;
+  };
+
+  const localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
   peerConnection.onicecandidate = e => {
-    if (e.candidate) socket.emit('signal', { to: peerId, data: { candidate: e.candidate } });
+    if (e.candidate) {
+      socket.emit('signal', { to: peerId, data: { candidate: e.candidate } });
+    }
   };
 
   peerConnection.onconnectionstatechange = () => {
