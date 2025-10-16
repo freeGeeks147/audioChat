@@ -35,20 +35,26 @@ class GSProfiles:
 
     def dp_dpsi(self, psi: np.ndarray, psi_axis: float, psi_bdry: float) -> np.ndarray:
         scale = max(abs(psi_bdry - psi_axis), 1e-16)
-        psi_norm = np.clip((psi - psi_axis) / (psi_bdry - psi_axis + 1e-30), 0.0, 1.0)
+        psi_norm = (psi - psi_axis) / (psi_bdry - psi_axis + 1e-30)
+        inside = (psi_norm <= 1.0)
+        psi_norm_clipped = np.clip(psi_norm, 0.0, 1.0)
         if self.dp_dpsi_norm_fn is not None:
-            g = self.dp_dpsi_norm_fn(psi_norm)
+            g = self.dp_dpsi_norm_fn(psi_norm_clipped)
         else:
-            g = -self.alpha_p * np.ones_like(psi_norm)
+            g = -self.alpha_p * np.ones_like(psi_norm_clipped)
+        g = g * inside
         return g / scale
 
     def dF2_dpsi(self, psi: np.ndarray, psi_axis: float, psi_bdry: float) -> np.ndarray:
         scale = max(abs(psi_bdry - psi_axis), 1e-16)
-        psi_norm = np.clip((psi - psi_axis) / (psi_bdry - psi_axis + 1e-30), 0.0, 1.0)
+        psi_norm = (psi - psi_axis) / (psi_bdry - psi_axis + 1e-30)
+        inside = (psi_norm <= 1.0)
+        psi_norm_clipped = np.clip(psi_norm, 0.0, 1.0)
         if self.dF2_dpsi_norm_fn is not None:
-            g = self.dF2_dpsi_norm_fn(psi_norm)
+            g = self.dF2_dpsi_norm_fn(psi_norm_clipped)
         else:
-            g = -self.beta_F2 * np.ones_like(psi_norm)
+            g = -self.beta_F2 * np.ones_like(psi_norm_clipped)
+        g = g * inside
         return g / scale
 
     def integrate_p(self, psi: np.ndarray, psi_axis: float, psi_bdry: float) -> np.ndarray:
@@ -103,6 +109,8 @@ class GSEquilibrium:
     B_R: np.ndarray  # poloidal field components
     B_Z: np.ndarray
     B_phi: np.ndarray
+    j_phi: np.ndarray
+    Ip: float
     psi_axis: float
     psi_boundary: float
     axis_index: Tuple[int, int]
@@ -239,6 +247,24 @@ def solve_gs(params: GSParams, profiles: GSProfiles) -> GSEquilibrium:
     B_Z = dpsi_dR / np.maximum(RR, 1e-9)
     B_phi = F / np.maximum(RR, 1e-9)
 
+    # Toroidal current density j_phi from Δ* psi: j_phi = (1/mu0 R) * (∂^2ψ/∂R^2 - (1/R)∂ψ/∂R + ∂^2ψ/∂Z^2)
+    invR = 1.0 / np.maximum(RR, 1e-9)
+    d2psi_dR2 = np.zeros_like(psi)
+    d2psi_dZ2 = np.zeros_like(psi)
+    dpsi_dR_mid = np.zeros_like(psi)
+    # Second derivatives (central differences)
+    d2psi_dR2[:, 1:-1] = (psi[:, 2:] - 2.0 * psi[:, 1:-1] + psi[:, :-2]) / (dr * dr)
+    d2psi_dZ2[1:-1, :] = (psi[2:, :] - 2.0 * psi[1:-1, :] + psi[:-2, :]) / (dz * dz)
+    # First derivative for -(1/R)∂ψ/∂R term
+    dpsi_dR_mid[:, 1:-1] = (psi[:, 2:] - psi[:, :-2]) / (2.0 * dr)
+    laplace_star = d2psi_dR2 - invR * dpsi_dR_mid + d2psi_dZ2
+    j_phi = laplace_star / (MU0 * np.maximum(RR, 1e-9))
+    # Integrate over domain (restrict to inside psi_norm<=1)
+    psi_norm = (psi - psi_axis) / (psi_bdry - psi_axis + 1e-30)
+    inside = (psi_norm <= 1.0)
+    dA = dr * dz
+    Ip = float(np.sum(j_phi[inside]) * dA)
+
     return GSEquilibrium(
         R=Rg,
         Z=Zg,
@@ -248,6 +274,8 @@ def solve_gs(params: GSParams, profiles: GSProfiles) -> GSEquilibrium:
         B_R=B_R,
         B_Z=B_Z,
         B_phi=B_phi,
+        j_phi=j_phi,
+        Ip=Ip,
         psi_axis=psi_axis,
         psi_boundary=psi_bdry,
         axis_index=axis_index,
