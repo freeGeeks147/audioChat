@@ -5,11 +5,14 @@ from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from .equilibrium import EquilibriumParams, generate_equilibrium
 from .sources import GaussianParams, composite_sources
 from .transport import TransportParams, run_transport
+from .gs import GSParams, GSProfiles, solve_gs
 
 
 def _plot_profiles(outdir: Path, rho: np.ndarray, time: np.ndarray, Te: np.ndarray, Ti: np.ndarray) -> None:
@@ -78,6 +81,22 @@ def run_example(output: str) -> None:
     print(f"Saved outputs and plots to {outdir}")
 
 
+def _plot_gs(outdir: Path, R: np.ndarray, Z: np.ndarray, psi: np.ndarray) -> None:
+    outdir.mkdir(parents=True, exist_ok=True)
+    import matplotlib.pyplot as plt
+    RR, ZZ = np.meshgrid(R, Z)
+    plt.figure(figsize=(6,5))
+    cs = plt.contour(RR, ZZ, psi, levels=25, colors='k', linewidths=0.6)
+    plt.clabel(cs, inline=1, fontsize=8, fmt='%1.2f')
+    plt.xlabel('R [m]')
+    plt.ylabel('Z [m]')
+    plt.title('Poloidal flux contours (psi)')
+    plt.axis('equal')
+    plt.tight_layout()
+    plt.savefig(outdir / 'psi_contours.png', dpi=160)
+    plt.close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run a local tokamak equilibrium + 1D transport example")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -85,10 +104,42 @@ def main() -> None:
     ex = sub.add_parser("run-example", help="Run example and write outputs")
     ex.add_argument("--output", default=str(Path.cwd() / "examples" / "run1"), help="Output directory")
 
+    gs = sub.add_parser("gs-solve", help="Run fixed-boundary Grad–Shafranov solver and write outputs")
+    gs.add_argument("--output", default=str(Path.cwd() / "examples" / "gs1"), help="Output directory")
+    gs.add_argument("--alpha_p", type=float, default=0.0, help="-d p / d psi_norm constant")
+    gs.add_argument("--beta_F2", type=float, default=0.0, help="-d(F^2)/d psi_norm constant")
+    gs.add_argument("--R0", type=float, default=3.0)
+    gs.add_argument("--a", type=float, default=1.0)
+    gs.add_argument("--kappa", type=float, default=1.7)
+    gs.add_argument("--B0", type=float, default=5.3)
+    gs.add_argument("--nR", type=int, default=257)
+    gs.add_argument("--nZ", type=int, default=257)
+
     args = parser.parse_args()
 
     if args.cmd == "run-example":
         run_example(args.output)
+    elif args.cmd == "gs-solve":
+        outdir = Path(args.output)
+        params = GSParams(nR=args.nR, nZ=args.nZ)
+        params = GSParams(
+            R_min=1.0, R_max=5.0, Z_min=-2.0, Z_max=2.0,
+            nR=args.nR, nZ=args.nZ,
+            R0=args.R0, a=args.a, kappa=args.kappa,
+            omega=1.7, max_iters=20000, tol=1e-6,
+            psi_boundary_value=1.0,
+        )
+        profiles = GSProfiles(alpha_p=args.alpha_p, beta_F2=args.beta_F2, F_boundary=args.B0*args.R0)
+        eq = solve_gs(params, profiles)
+        np.savez_compressed(
+            outdir / "gs_result.npz",
+            R=eq.R, Z=eq.Z, psi=eq.psi, p=eq.p, F=eq.F,
+            B_R=eq.B_R, B_Z=eq.B_Z, B_phi=eq.B_phi,
+            psi_axis=eq.psi_axis, psi_boundary=eq.psi_boundary,
+            axis_index=np.array(eq.axis_index),
+        )
+        _plot_gs(outdir, eq.R, eq.Z, eq.psi)
+        print(f"Saved GS outputs and plots to {outdir}")
 
 
 if __name__ == "__main__":
