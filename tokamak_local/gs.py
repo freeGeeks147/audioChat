@@ -82,6 +82,7 @@ class GSParams:
     R0: float = 3.0
     a: float = 1.0
     kappa: float = 1.7
+    delta: float = 0.0
 
     # Solver
     omega: float = 1.7  # SOR relaxation
@@ -116,16 +117,22 @@ def _boundary_psi_rectangular(R: np.ndarray, Z: np.ndarray, params: GSParams) ->
     Zg = np.linspace(params.Z_min, params.Z_max, params.nZ)
     RR, ZZ = np.meshgrid(Rg, Zg)
 
-    # Elliptical normalized radius s^2
-    s2 = ((RR - params.R0) / params.a) ** 2 + (ZZ / (params.kappa * params.a)) ** 2
-    s2_clamped = np.clip(s2, 0.0, 1.0)
-    psi0 = params.psi_boundary_value * s2_clamped
+    # Miller-like D-shape approximate radius function using triangularity delta.
+    # Compute an approximate poloidal angle ignoring delta, then shift R-centerline by delta*sin(theta).
+    x = (RR - params.R0) / params.a
+    y = ZZ / (params.kappa * params.a)
+    theta = np.arctan2(y, x)
+    R_center = params.R0 + params.delta * params.a * np.sin(theta)
+    x_d = (RR - R_center) / params.a
+    y_d = y
+    s2 = x_d**2 + y_d**2
+    psi0 = params.psi_boundary_value * s2
 
-    # Apply rectangular boundary equal to psi0 on edges
-    psi0[0, :] = params.psi_boundary_value * np.clip(((Zg[0]) / (params.kappa * params.a)) ** 2 + ((Rg - params.R0) / params.a) ** 2, 0.0, 1.0)
-    psi0[-1, :] = params.psi_boundary_value * np.clip(((Zg[-1]) / (params.kappa * params.a)) ** 2 + ((Rg - params.R0) / params.a) ** 2, 0.0, 1.0)
-    psi0[:, 0] = params.psi_boundary_value * np.clip((Zg / (params.kappa * params.a)) ** 2 + ((Rg[0] - params.R0) / params.a) ** 2, 0.0, 1.0)
-    psi0[:, -1] = params.psi_boundary_value * np.clip((Zg / (params.kappa * params.a)) ** 2 + ((Rg[-1] - params.R0) / params.a) ** 2, 0.0, 1.0)
+    # Dirichlet boundary equals psi0 evaluated on the rectangle edges
+    psi0[0, :] = psi0[0, :]
+    psi0[-1, :] = psi0[-1, :]
+    psi0[:, 0] = psi0[:, 0]
+    psi0[:, -1] = psi0[:, -1]
 
     return Rg, Zg, psi0
 

@@ -111,6 +111,7 @@ def main() -> None:
     gs.add_argument("--R0", type=float, default=3.0)
     gs.add_argument("--a", type=float, default=1.0)
     gs.add_argument("--kappa", type=float, default=1.7)
+    gs.add_argument("--delta", type=float, default=0.0)
     gs.add_argument("--B0", type=float, default=5.3)
     gs.add_argument("--nR", type=int, default=257)
     gs.add_argument("--nZ", type=int, default=257)
@@ -126,7 +127,7 @@ def main() -> None:
         params = GSParams(
             R_min=1.0, R_max=5.0, Z_min=-2.0, Z_max=2.0,
             nR=args.nR, nZ=args.nZ,
-            R0=args.R0, a=args.a, kappa=args.kappa,
+            R0=args.R0, a=args.a, kappa=args.kappa, delta=args.delta,
             omega=1.7, max_iters=20000, tol=1e-6,
             psi_boundary_value=1.0,
         )
