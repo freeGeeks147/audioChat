@@ -121,6 +121,7 @@ def main() -> None:
         run_example(args.output)
     elif args.cmd == "gs-solve":
         outdir = Path(args.output)
+        outdir.mkdir(parents=True, exist_ok=True)
         params = GSParams(nR=args.nR, nZ=args.nZ)
         params = GSParams(
             R_min=1.0, R_max=5.0, Z_min=-2.0, Z_max=2.0,
