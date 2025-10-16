@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Tuple
+from typing import Callable, Tuple, Optional
 import numpy as np
+from matplotlib.path import Path as MplPath
 
 MU0 = 4e-7 * np.pi  # [H/m]
 
@@ -178,7 +179,40 @@ def _sor_sweep(
     return max_update
 
 
-def solve_gs(params: GSParams, profiles: GSProfiles) -> GSEquilibrium:
+def _lcfs_masks(
+    Rg: np.ndarray,
+    Zg: np.ndarray,
+    lcfs_R: np.ndarray,
+    lcfs_Z: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Create inside-plasma mask and a boundary mask from an LCFS polygon.
+
+    - inside_mask[j,i] is True if (R[i],Z[j]) lies inside polygon
+    - boundary_mask[j,i] marks nearest grid points to the polygon vertices
+    """
+    polygon = np.column_stack([lcfs_R, lcfs_Z])
+    path = MplPath(polygon, closed=True)
+    RR, ZZ = np.meshgrid(Rg, Zg)
+    pts = np.column_stack([RR.ravel(), ZZ.ravel()])
+    inside_flat = path.contains_points(pts)
+    inside_mask = inside_flat.reshape(RR.shape)
+
+    # Boundary mask by snapping vertices to nearest grid points
+    dr = Rg[1] - Rg[0]
+    dz = Zg[1] - Zg[0]
+    i_idx = np.clip(np.round((lcfs_R - Rg[0]) / dr).astype(int), 0, Rg.size - 1)
+    j_idx = np.clip(np.round((lcfs_Z - Zg[0]) / dz).astype(int), 0, Zg.size - 1)
+    boundary_mask = np.zeros_like(inside_mask, dtype=bool)
+    boundary_mask[j_idx, i_idx] = True
+    return inside_mask, boundary_mask
+
+
+def solve_gs(
+    params: GSParams,
+    profiles: GSProfiles,
+    lcfs: Optional[Tuple[np.ndarray, np.ndarray]] = None,
+    psi_lcfs_value: Optional[float] = None,
+) -> GSEquilibrium:
     """Solve the fixed-boundary Grad–Shafranov equation on a rectangular grid.
 
     Equation: Δ* psi = -mu0 R^2 dp/dpsi - 0.5 d(F^2)/dpsi
@@ -198,22 +232,45 @@ def solve_gs(params: GSParams, profiles: GSProfiles) -> GSEquilibrium:
     psi[:, 0] = psi[:, 0]
     psi[:, -1] = psi[:, -1]
 
+    # Optional LCFS-based constraints
+    if lcfs is not None:
+        lcfs_R, lcfs_Z = lcfs
+        inside_mask, boundary_mask = _lcfs_masks(Rg, Zg, lcfs_R, lcfs_Z)
+        # Initialize psi so that LCFS roughly matches desired value
+        psi_bdry_target = params.psi_boundary_value if psi_lcfs_value is None else psi_lcfs_value
+        psi[boundary_mask] = psi_bdry_target
+    else:
+        inside_mask = np.ones_like(psi, dtype=bool)
+        boundary_mask = np.zeros_like(psi, dtype=bool)
+
     for it in range(params.max_iters):
-        # Determine axis and boundary psi for normalization
-        axis_index = np.unravel_index(np.argmin(psi), psi.shape)
-        psi_axis = float(psi[axis_index])
-        # Take boundary values from edges (mean for robustness)
-        edge_vals = np.concatenate([
-            psi[0, :], psi[-1, :], psi[:, 0], psi[:, -1]
-        ])
-        psi_bdry = float(np.mean(edge_vals))
+        # Determine axis and boundary psi for normalization (use LCFS if provided)
+        if lcfs is not None:
+            # Axis is minimum psi within plasma region
+            masked_psi = np.where(inside_mask, psi, np.inf)
+            axis_index = np.unravel_index(np.argmin(masked_psi), psi.shape)
+            psi_axis = float(psi[axis_index])
+            psi_bdry = params.psi_boundary_value if psi_lcfs_value is None else psi_lcfs_value
+        else:
+            axis_index = np.unravel_index(np.argmin(psi), psi.shape)
+            psi_axis = float(psi[axis_index])
+            edge_vals = np.concatenate([
+                psi[0, :], psi[-1, :], psi[:, 0], psi[:, -1]
+            ])
+            psi_bdry = float(np.mean(edge_vals))
 
         # Build RHS from current psi
         dpdpsi = profiles.dp_dpsi(psi, psi_axis, psi_bdry)
         dF2dpsi = profiles.dF2_dpsi(psi, psi_axis, psi_bdry)
         rhs = -MU0 * (RR ** 2) * dpdpsi - 0.5 * dF2dpsi
+        if lcfs is not None:
+            rhs = rhs * inside_mask  # vacuum outside plasma
 
         max_update = _sor_sweep(psi, RR, ZZ, dr, dz, params.omega, rhs)
+
+        # Re-apply LCFS Dirichlet each iteration
+        if lcfs is not None:
+            psi[boundary_mask] = psi_bdry
 
         if it % 200 == 0:
             # Optional inexpensive residual estimate (max update)
@@ -222,10 +279,16 @@ def solve_gs(params: GSParams, profiles: GSProfiles) -> GSEquilibrium:
             break
 
     # Post-process fields
-    axis_index = np.unravel_index(np.argmin(psi), psi.shape)
-    psi_axis = float(psi[axis_index])
-    edge_vals = np.concatenate([psi[0, :], psi[-1, :], psi[:, 0], psi[:, -1]])
-    psi_bdry = float(np.mean(edge_vals))
+    if lcfs is not None:
+        masked_psi = np.where(inside_mask, psi, np.inf)
+        axis_index = np.unravel_index(np.argmin(masked_psi), psi.shape)
+        psi_axis = float(psi[axis_index])
+        psi_bdry = params.psi_boundary_value if psi_lcfs_value is None else psi_lcfs_value
+    else:
+        axis_index = np.unravel_index(np.argmin(psi), psi.shape)
+        psi_axis = float(psi[axis_index])
+        edge_vals = np.concatenate([psi[0, :], psi[-1, :], psi[:, 0], psi[:, -1]])
+        psi_bdry = float(np.mean(edge_vals))
 
     # Compute p(psi) and F(psi)
     p = profiles.integrate_p(psi, psi_axis, psi_bdry)

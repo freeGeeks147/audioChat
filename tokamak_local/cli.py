@@ -140,6 +140,7 @@ def main() -> None:
     gs.add_argument("--F", type=float, default=None, help="Toroidal field function F=R*Bphi at boundary")
     gs.add_argument("--nR", type=int, default=257)
     gs.add_argument("--nZ", type=int, default=257)
+    gs.add_argument("--lcfs", type=str, default=None, help="Path to LCFS file (.npz with R,Z or .csv two columns)")
 
     args = parser.parse_args()
 
@@ -158,7 +159,16 @@ def main() -> None:
         )
         F_boundary = args.F if args.F is not None else args.B0 * args.R0
         profiles = GSProfiles(alpha_p=args.alpha_p, beta_F2=args.beta_F2, F_boundary=F_boundary)
-        eq = solve_gs(params, profiles)
+        lcfs = None
+        if args.lcfs:
+            p = Path(args.lcfs)
+            if p.suffix == '.npz':
+                data = np.load(p)
+                lcfs = (data['R'], data['Z'])
+            elif p.suffix == '.csv':
+                arr = np.loadtxt(p, delimiter=',')
+                lcfs = (arr[:,0], arr[:,1])
+        eq = solve_gs(params, profiles, lcfs=lcfs)
         np.savez_compressed(
             outdir / "gs_result.npz",
             R=eq.R, Z=eq.Z, psi=eq.psi, p=eq.p, F=eq.F,
