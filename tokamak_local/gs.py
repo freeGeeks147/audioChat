@@ -321,7 +321,7 @@ def solve_gs(
     # First derivative for -(1/R)∂ψ/∂R term
     dpsi_dR_mid[:, 1:-1] = (psi[:, 2:] - psi[:, :-2]) / (2.0 * dr)
     laplace_star = d2psi_dR2 - invR * dpsi_dR_mid + d2psi_dZ2
-    j_phi = laplace_star / (MU0 * np.maximum(RR, 1e-9))
+    j_phi = -laplace_star / (MU0 * np.maximum(RR, 1e-9))
     # Integrate over domain (restrict to inside psi_norm<=1)
     psi_norm = (psi - psi_axis) / (psi_bdry - psi_axis + 1e-30)
     inside = (psi_norm <= 1.0)
